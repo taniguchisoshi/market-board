@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Update the market board news block with five Japanese news items."""
+"""Update the market board news block with five Japanese news items.
+
+This free version does not call the OpenAI API. It scores Japanese news from
+Google News RSS and formats the top five market-moving items for the board.
+"""
 
 from __future__ import annotations
 
@@ -10,27 +14,32 @@ import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urlencode, urljoin
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
-
-import feedparser
-import requests
-from openai import OpenAI
 
 
 AUTO_NEWS_START = "<!-- AUTO_NEWS_START -->"
 AUTO_NEWS_END = "<!-- AUTO_NEWS_END -->"
 
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 JST = ZoneInfo("Asia/Tokyo")
 
+BLOOMBERG_QUERIES = [
+    '"米国市況" Bloomberg',
+    '"米国市況" ブルームバーグ',
+    '"S&P500" "Bloomberg" "米国市況"',
+    '"米国株" "Bloomberg" "S&P500"',
+    '"ナスダック" "Bloomberg" "米国市況"',
+    '"マイクロン" "Bloomberg" "米国株"',
+]
+
 JAPANESE_QUERIES = [
-    "ブルームバーグ 米国株 マーケット 日本語",
-    "Bloomberg 米国株 日本語 S&P500 ナスダック",
+    *BLOOMBERG_QUERIES,
     "米国株 株価 日本語",
     "NYダウ ナスダック S&P500 日本語",
     "FRB FOMC 金利 米国株 日本語",
@@ -40,11 +49,81 @@ JAPANESE_QUERIES = [
     "原油 金利 為替 米国株 日本語",
 ]
 
-ENGLISH_FALLBACK_QUERIES = [
-    "US stocks market moving news",
-    "Federal Reserve Treasury yields Nasdaq stocks",
-    "Nvidia Magnificent Seven earnings stocks",
-]
+IMPACT_KEYWORDS = {
+    "米国株": 12,
+    "米株": 12,
+    "Ｓ＆Ｐ５００": 12,
+    "S&P500": 12,
+    "ナスダック": 12,
+    "NASDAQ": 12,
+    "NYダウ": 10,
+    "ダウ": 8,
+    "FRB": 12,
+    "FOMC": 12,
+    "金利": 11,
+    "利下げ": 11,
+    "利上げ": 11,
+    "米国債": 10,
+    "長期金利": 10,
+    "CPI": 10,
+    "PCE": 10,
+    "雇用統計": 10,
+    "PMI": 8,
+    "GDP": 8,
+    "決算": 9,
+    "エヌビディア": 11,
+    "NVIDIA": 11,
+    "半導体": 10,
+    "AI": 9,
+    "アップル": 8,
+    "Apple": 8,
+    "マイクロソフト": 8,
+    "Microsoft": 8,
+    "アルファベット": 8,
+    "Google": 8,
+    "アマゾン": 8,
+    "Amazon": 8,
+    "メタ": 8,
+    "Meta": 8,
+    "テスラ": 8,
+    "Tesla": 8,
+    "原油": 9,
+    "ドル円": 9,
+    "為替": 8,
+    "中東": 7,
+    "関税": 7,
+}
+
+SOURCE_BONUS = {
+    "Bloomberg": 45,
+    "Bloomberg.com": 50,
+    "ブルームバーグ": 45,
+    "TBS NEWS DIG": 38,
+    "Yahoo!ファイナンス": 30,
+    "ロイター": 12,
+    "Reuters": 12,
+    "日本経済新聞": 10,
+    "日経": 10,
+    "NHK": 7,
+    "Yahoo": 4,
+}
+
+EXCLUDE_NEWS_PATTERNS = re.compile(
+    r"\bQuote\b|Stock Price Quote|Fund\s+-\s+Bloomberg|Analysis\s+-|"
+    r"Index\s+-\s+Bloomberg|^\w{2,10}[:：]\s|"
+    r"ファンド|投信|投資信託|基準価額|eMAXIS|Slim米国株式|\b\d{8}\b|"
+    r"株価・株式情報|株価情報|株式情報|【[A-Z]{1,6}】",
+    flags=re.IGNORECASE,
+)
+
+THEME_PATTERNS = {
+    "semiconductor": r"半導体|エヌビディア|NVIDIA|Micron|マイクロン|Broadcom|ブロードコム|SOX|AI",
+    "rates": r"FRB|FOMC|金利|利下げ|利上げ|米国債|長期金利|パウエル",
+    "macro": r"CPI|PCE|雇用統計|PMI|GDP|景気|インフレ",
+    "index": r"米国株|米株|S&P500|Ｓ＆Ｐ５００|ナスダック|NASDAQ|NYダウ|ダウ",
+    "fx_oil": r"原油|ドル円|為替|中東|ホルムズ",
+    "earnings": r"決算|業績|見通し|ガイダンス",
+}
 
 
 @dataclass(frozen=True)
@@ -89,17 +168,69 @@ def normalize_title(title: str) -> str:
     return re.sub(r"[|｜:：\-ー–—].*$", "", title)
 
 
-def fetch_news_candidates(max_articles: int = 40) -> list[Article]:
+def read_url(url: str, *, headers: dict[str, str] | None = None, data: bytes | None = None) -> str:
+    request_headers = {
+        "User-Agent": "market-board-updater/1.0",
+        "Accept": "application/rss+xml, application/xml, text/xml, application/json, text/html",
+    }
+    if headers:
+        request_headers.update(headers)
+
+    request = Request(url, data=data, headers=request_headers)
+    with urlopen(request, timeout=30) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, errors="replace")
+
+
+def find_child_text(element: ET.Element, name: str, namespaces: dict[str, str] | None = None) -> str:
+    if namespaces:
+        for prefix, uri in namespaces.items():
+            child = element.find(f"{{{uri}}}{name}")
+            if child is not None and child.text:
+                return clean_text(child.text)
+
+    child = element.find(name)
+    if child is not None and child.text:
+        return clean_text(child.text)
+    return ""
+
+
+def parse_rss_items(xml_text: str) -> list[dict[str, str]]:
+    root = ET.fromstring(xml_text)
+    items: list[dict[str, str]] = []
+    for item in root.findall(".//item"):
+        source = ""
+        source_element = item.find("source")
+        if source_element is not None and source_element.text:
+            source = clean_text(source_element.text)
+
+        items.append(
+            {
+                "title": find_child_text(item, "title"),
+                "link": find_child_text(item, "link"),
+                "published": find_child_text(item, "pubDate"),
+                "summary": find_child_text(item, "description"),
+                "source": source,
+            }
+        )
+    return items
+
+
+def fetch_news_candidates(max_articles: int = 60) -> list[Article]:
     articles: list[Article] = []
     seen: set[str] = set()
 
     def collect(query: str, *, japanese: bool) -> None:
         nonlocal articles
-        feed = feedparser.parse(google_news_rss_url(query, japanese=japanese))
-        for entry in feed.entries:
-            title = clean_text(getattr(entry, "title", ""))
-            url = getattr(entry, "link", "")
+        xml_text = read_url(google_news_rss_url(query, japanese=japanese))
+        for entry in parse_rss_items(xml_text):
+            title = clean_text(entry.get("title", ""))
+            url = entry.get("link", "")
             if not title or not url:
+                continue
+            source = clean_text(entry.get("source", "")) or "Google News"
+            summary = clean_text(entry.get("summary", ""))
+            if EXCLUDE_NEWS_PATTERNS.search(" ".join([title, source, summary])):
                 continue
 
             key = normalize_title(title)
@@ -107,18 +238,14 @@ def fetch_news_candidates(max_articles: int = 40) -> list[Article]:
                 continue
             seen.add(key)
 
-            source = ""
-            if hasattr(entry, "source"):
-                source = clean_text(getattr(entry.source, "title", ""))
-
             articles.append(
                 Article(
                     title=title,
                     url=url,
-                    source=source or "Google News",
-                    published=clean_text(getattr(entry, "published", "")),
+                    source=source,
+                    published=clean_text(entry.get("published", "")),
                     language="ja" if japanese else "en",
-                    summary=clean_text(getattr(entry, "summary", "")),
+                    summary=summary,
                 )
             )
 
@@ -127,89 +254,157 @@ def fetch_news_candidates(max_articles: int = 40) -> list[Article]:
         if len(articles) >= max_articles:
             break
 
-    if len(articles) < 15:
-        for query in ENGLISH_FALLBACK_QUERIES:
-            collect(query, japanese=False)
-            if len(articles) >= max_articles:
-                break
-
     return articles[:max_articles]
 
 
-def summarize_with_openai(articles: list[Article]) -> list[dict[str, str]]:
+def article_text(article: Article) -> str:
+    return " ".join([article.title, article.source, article.summary])
+
+
+def score_article(article: Article) -> int:
+    text = article_text(article)
+    score = 0
+    for keyword, weight in IMPACT_KEYWORDS.items():
+        if keyword.lower() in text.lower():
+            score += weight
+    for source, bonus in SOURCE_BONUS.items():
+        if source.lower() in text.lower():
+            score += bonus
+    if article.language == "ja":
+        score += 12
+    if article.published:
+        score += 4
+    if is_bloombergish(article):
+        score += 35
+    if "米国市況" in text:
+        score += 25
+    return score
+
+
+def is_bloombergish(article: Article) -> bool:
+    text = article_text(article)
+    return bool(
+        re.search(
+            r"Bloomberg|ブルームバーグ|TBS CROSS DIG with Bloomberg|TBS NEWS DIG",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def article_theme(article: Article) -> str:
+    text = article_text(article)
+    for theme, pattern in THEME_PATTERNS.items():
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return theme
+    return "other"
+
+
+def strip_source_suffix(title: str) -> str:
+    title = re.sub(r"\s+-\s+[^-]+$", "", title).strip()
+    title = re.sub(r"\s+[|｜]\s+.+$", "", title).strip()
+    return title
+
+
+def make_headline(article: Article) -> str:
+    headline = strip_source_suffix(article.title)
+    headline = re.sub(r"^(米国株|米株)[:：]\s*", "", headline)
+    headline = re.sub(r"\s+", " ", headline).strip()
+    if len(headline) > 34:
+        headline = headline[:33].rstrip() + "…"
+    return headline
+
+
+def make_summary(article: Article) -> str:
+    title = strip_source_suffix(article.title)
+    summary = clean_text(article.summary)
+    summary = re.sub(r"\s+-\s+[^-]+$", "", summary).strip()
+    summary = re.sub(r"^" + re.escape(title), "", summary).strip(" -:：")
+
+    if (
+        not summary
+        or len(summary) < 25
+        or summary.startswith("|")
+        or re.fullmatch(r".*(TBS CROSS DIG with Bloomberg|TBS NEWS DIG|Yahoo!ニュース|Yahoo!ファイナンス).*", summary)
+    ):
+        summary = title
+
+    summary = re.sub(r"\s+", " ", summary).strip()
+    if len(summary) > 115:
+        summary = summary[:114].rstrip() + "…"
+    if not summary.endswith(("。", "…", "！", "？")):
+        summary += "。"
+    return summary
+
+
+def display_source(article: Article) -> str:
+    source = article.source or "ソース"
+    text = article_text(article)
+    if re.search(r"Bloomberg|ブルームバーグ", text, flags=re.IGNORECASE):
+        if "TBS" in source:
+            return "Bloomberg / TBS NEWS DIG"
+        if "Yahoo" in source:
+            return "Bloomberg / Yahoo!ファイナンス"
+        if "Bloomberg" not in source and "ブルームバーグ" not in source:
+            return f"Bloomberg / {source}"
+    return source
+
+
+def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
     if not articles:
         raise RuntimeError("No news candidates were found.")
 
-    client = OpenAI(api_key=env_required("OPENAI_API_KEY"))
-    today_jst = datetime.now(JST).strftime("%Y-%m-%d")
-    candidate_payload = [
+    ranked = sorted(articles, key=score_article, reverse=True)
+    selected: list[Article] = []
+    used_themes: set[str] = set()
+    used_titles: set[str] = set()
+
+    for article in ranked:
+        if not is_bloombergish(article):
+            continue
+        title_key = normalize_title(article.title)
+        if title_key in used_titles:
+            continue
+        selected.append(article)
+        used_titles.add(title_key)
+        used_themes.add(article_theme(article))
+        if len(selected) == 3:
+            break
+
+    for article in ranked:
+        if score_article(article) < 10:
+            continue
+        title_key = normalize_title(article.title)
+        if title_key in used_titles:
+            continue
+
+        theme = article_theme(article)
+        if theme in used_themes and len(selected) < 3:
+            continue
+
+        selected.append(article)
+        used_titles.add(title_key)
+        used_themes.add(theme)
+        if len(selected) == 5:
+            break
+
+    if len(selected) < 5:
+        for article in ranked:
+            if article in selected:
+                continue
+            selected.append(article)
+            if len(selected) == 5:
+                break
+
+    return [
         {
-            "title": article.title,
+            "headline": make_headline(article),
+            "summary": make_summary(article),
             "url": article.url,
-            "source": article.source,
-            "published": article.published,
-            "language": article.language,
-            "summary": article.summary,
+            "source": display_source(article),
         }
-        for article in articles
+        for article in selected[:5]
     ]
-
-    system_prompt = (
-        "あなたは米国株の朝ライブ用ニュース編集者です。"
-        "日本語記事を最優先し、米国株の値動きに関係する材料を5本だけ選びます。"
-        "考察、投資判断、ライブ用コメントは入れず、事実関係だけを短く要約してください。"
-    )
-    user_prompt = f"""
-今日の日付: {today_jst}
-
-候補記事JSON:
-{json.dumps(candidate_payload, ensure_ascii=False)}
-
-必ず次のJSON形式だけで返してください。
-{{
-  "items": [
-    {{
-      "headline": "見出し",
-      "summary": "記事内容の要約。120字以内。事実だけを書く",
-      "url": "記事URL"
-    }}
-  ]
-}}
-
-条件:
-- itemsは必ず5本。
-- 上から米国株へのインパクトが大きい順に並べる。
-- headlineは短くキャッチーな見出しにする。
-- summaryは記事の要約だけにする。相場への見方、投資判断、ライブで話す一言、確認ポイントは書かない。
-- 日本語記事リンクを優先。
-- 日本語記事が十分でない場合は、Bloombergなど市場系メディアの見出しを参考に重要ニュースを補う。
-- 米国株の指数、金利、FRB、為替、原油、半導体、大型テック、決算に関係が薄い記事は選ばない。
-- PMI、CPI、PCE、雇用統計などの経済指標は、今日発表されたものだけを選ぶ。発表待ちや古い指標をニュース扱いしない。
-- 同じテーマの重複を避ける。
-- URLは候補記事に含まれるものだけを使う。
-- ソース確認状況に関する注意書きや補足ラベルは出力しない。
-"""
-
-    response = client.chat.completions.create(
-        model=DEFAULT_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.2,
-    )
-    content = response.choices[0].message.content or "{}"
-    parsed = json.loads(content)
-    items = parsed.get("items", [])
-    if not isinstance(items, list) or len(items) != 5:
-        raise RuntimeError(f"OpenAI response did not contain exactly 5 items: {content}")
-
-    required = {"headline", "summary", "url"}
-    for item in items:
-        if not isinstance(item, dict) or not required.issubset(item):
-            raise RuntimeError(f"OpenAI response item is missing required fields: {item}")
-    return items
 
 
 def render_news_html(items: list[dict[str, str]]) -> str:
@@ -222,29 +417,56 @@ def render_news_html(items: list[dict[str, str]]) -> str:
         ),
     ]
 
-    for item in items:
+    popup_blocks: list[str] = []
+
+    for index, item in enumerate(items, start=1):
+        popup_id = f"mb-news-{index}"
+        headline = html.escape(item["headline"])
+        summary = html.escape(item["summary"])
+        url = html.escape(item["url"], quote=True)
+        source = html.escape(item.get("source") or "ソース")
         blocks.extend(
             [
                 '  <article style="background:#16233c;border:1px solid #3b4a66;border-radius:18px;padding:20px 22px;box-sizing:border-box;">',
                 (
                     '    <h3 style="margin:0 0 10px;color:#ffffff;font-size:23px;line-height:1.35;font-weight:900;">'
-                    f"{html.escape(item['headline'])}</h3>"
+                    f"{headline}</h3>"
                 ),
                 (
                     '    <p style="margin:0 0 10px;color:#d6deee;font-size:16px;font-weight:750;line-height:1.85;">'
-                    f"{html.escape(item['summary'])}</p>"
+                    f"{summary}</p>"
                 ),
                 (
-                    '    <a href="'
-                    + html.escape(item["url"], quote=True)
-                    + '" target="_blank" rel="noopener noreferrer" '
-                    + 'style="display:inline-block;margin-top:4px;color:#7dd3fc;font-size:15px;font-weight:900;text-decoration:underline;">ソースリンク</a>'
+                    f'    <a href="#{popup_id}" '
+                    + 'style="display:inline-block;margin-top:4px;color:#7dd3fc;font-size:15px;font-weight:900;text-decoration:underline;">'
+                    + f"ソース：{source}</a>"
                 ),
                 "  </article>",
             ]
         )
+        popup_blocks.extend(
+            [
+                f'<section id="{popup_id}" class="market-board-popup">',
+                '  <div class="market-board-popup-panel">',
+                '    <div class="market-board-popup-header">',
+                f"      <span>{source}：{headline}</span>",
+                '      <a href="#market-board-top" class="market-board-popup-close">閉じる</a>',
+                "    </div>",
+                '    <div class="market-board-popup-body">',
+                '      <div style="padding:26px;max-width:860px;margin:0 auto;color:#111827;box-sizing:border-box;">',
+                '        <div style="margin:0 0 10px;color:#0369a1;font-size:14px;font-weight:900;">ニュースソース</div>',
+                f'        <h3 style="margin:0 0 16px;color:#111827;font-size:28px;line-height:1.35;font-weight:900;">{headline}</h3>',
+                f'        <p style="margin:0 0 22px;color:#1f2937;font-size:18px;line-height:1.9;font-weight:750;">{summary}</p>',
+                '        <p style="margin:0 0 18px;color:#4b5563;font-size:14px;line-height:1.7;font-weight:700;">外部ニュースサイトはページ内表示を制限する場合があるため、この小窓ではライブ用の要約を表示します。</p>',
+                f'        <a href="{url}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#facc15;color:#111827;border-radius:12px;padding:12px 16px;font-size:16px;font-weight:900;text-decoration:none;">ソース記事を開く</a>',
+                "      </div>",
+                "    </div>",
+                "  </div>",
+                "</section>",
+            ]
+        )
 
-    blocks.extend(["</div>"])
+    blocks.extend(["</div>", *popup_blocks])
     return "\n".join(line for line in blocks if line)
 
 
@@ -268,14 +490,8 @@ def get_wordpress_page() -> tuple[str, dict[str, str], dict[str, Any]]:
         env_required("WORDPRESS_USERNAME"),
         env_required("WORDPRESS_APP_PASSWORD"),
     )
-    response = requests.get(
-        url,
-        params={"context": "edit"},
-        headers=headers,
-        timeout=30,
-    )
-    response.raise_for_status()
-    return url, headers, response.json()
+    response_text = read_url(f"{url}?{urlencode({'context': 'edit'})}", headers=headers)
+    return url, headers, json.loads(response_text)
 
 
 def page_content(page: dict[str, Any]) -> str:
@@ -308,13 +524,12 @@ def update_wordpress_page(new_content: str) -> None:
     url, headers, _ = get_wordpress_page()
     payload: dict[str, Any] = {"content": new_content}
 
-    response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
-    response.raise_for_status()
+    read_url(url, headers=headers, data=json.dumps(payload).encode("utf-8"))
 
 
 def build_news_html() -> str:
     articles = fetch_news_candidates()
-    items = summarize_with_openai(articles)
+    items = summarize_without_ai(articles)
     return render_news_html(items)
 
 

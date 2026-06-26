@@ -2,6 +2,7 @@ name: Update Market Board
 
 on:
   schedule:
+    # 04:50 JST is 19:50 UTC on the previous calendar day.
     - cron: "50 19 * * *"
   workflow_dispatch:
 
@@ -22,13 +23,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Update GitHub Pages HTML
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Update news
         run: python update_market_board.py --html-file index.html
+
+      - name: Update charts
+        run: node work/rebuild_popup_svg_charts.js
 
       - name: Commit updated board
         run: |
