@@ -39,6 +39,10 @@ BLOOMBERG_QUERIES = [
     '"円" "40年ぶり" "Bloomberg"',
     '"為替" "Bloomberg" "円" "安値"',
     '"ドル円" "Bloomberg" "円"',
+    '"停戦合意" "Bloomberg"',
+    '"停戦" "合意" "Bloomberg" "市場"',
+    '"中東" "停戦" "原油" "Bloomberg"',
+    '"イスラエル" "イラン" "停戦" "Bloomberg"',
 ]
 
 JAPANESE_QUERIES = [
@@ -99,6 +103,14 @@ IMPACT_KEYWORDS = {
     "円高": 8,
     "介入": 8,
     "中東": 7,
+    "停戦": 18,
+    "停戦合意": 28,
+    "ホルムズ": 11,
+    "イラン": 9,
+    "イスラエル": 9,
+    "報復": 8,
+    "攻撃応酬": 12,
+    "協議再開": 10,
     "関税": 7,
 }
 
@@ -121,7 +133,7 @@ EXCLUDE_NEWS_PATTERNS = re.compile(
     r"Index\s+-\s+Bloomberg|^\w{2,10}[:：]\s|"
     r"ファンド|投信|投資信託|基準価額|eMAXIS|Slim米国株式|\b\d{8}\b|"
     r"株価・株式情報|株価情報|株式情報|【[A-Z]{1,6}】|"
-    r"NISA|おすすめETF|じぶん年金|高配当株ETF",
+    r"NISA|おすすめETF|じぶん年金|高配当株ETF|今朝の5本",
     flags=re.IGNORECASE,
 )
 
@@ -130,7 +142,7 @@ THEME_PATTERNS = {
     "rates": r"FRB|FOMC|金利|利下げ|利上げ|米国債|長期金利|パウエル",
     "macro": r"CPI|PCE|雇用統計|PMI|GDP|景気|インフレ",
     "index": r"米国株|米株|S&P500|Ｓ＆Ｐ５００|ナスダック|NASDAQ|NYダウ|ダウ",
-    "fx_oil": r"原油|ドル円|為替|対ドル|円安|円高|介入|40年ぶり|中東|ホルムズ",
+    "fx_oil": r"原油|ドル円|為替|対ドル|円安|円高|介入|40年ぶり|中東|停戦|停戦合意|ホルムズ|イラン|イスラエル|報復",
     "earnings": r"決算|業績|見通し|ガイダンス",
 }
 
