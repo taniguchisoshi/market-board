@@ -36,6 +36,9 @@ BLOOMBERG_QUERIES = [
     '"米国株" "Bloomberg" "S&P500"',
     '"ナスダック" "Bloomberg" "米国市況"',
     '"マイクロン" "Bloomberg" "米国株"',
+    '"円" "40年ぶり" "Bloomberg"',
+    '"為替" "Bloomberg" "円" "安値"',
+    '"ドル円" "Bloomberg" "円"',
 ]
 
 JAPANESE_QUERIES = [
@@ -90,6 +93,11 @@ IMPACT_KEYWORDS = {
     "原油": 9,
     "ドル円": 9,
     "為替": 8,
+    "40年ぶり": 12,
+    "対ドル": 9,
+    "円安": 9,
+    "円高": 8,
+    "介入": 8,
     "中東": 7,
     "関税": 7,
 }
@@ -112,7 +120,8 @@ EXCLUDE_NEWS_PATTERNS = re.compile(
     r"\bQuote\b|Stock Price Quote|Fund\s+-\s+Bloomberg|Analysis\s+-|"
     r"Index\s+-\s+Bloomberg|^\w{2,10}[:：]\s|"
     r"ファンド|投信|投資信託|基準価額|eMAXIS|Slim米国株式|\b\d{8}\b|"
-    r"株価・株式情報|株価情報|株式情報|【[A-Z]{1,6}】",
+    r"株価・株式情報|株価情報|株式情報|【[A-Z]{1,6}】|"
+    r"NISA|おすすめETF|じぶん年金|高配当株ETF",
     flags=re.IGNORECASE,
 )
 
@@ -121,7 +130,7 @@ THEME_PATTERNS = {
     "rates": r"FRB|FOMC|金利|利下げ|利上げ|米国債|長期金利|パウエル",
     "macro": r"CPI|PCE|雇用統計|PMI|GDP|景気|インフレ",
     "index": r"米国株|米株|S&P500|Ｓ＆Ｐ５００|ナスダック|NASDAQ|NYダウ|ダウ",
-    "fx_oil": r"原油|ドル円|為替|中東|ホルムズ",
+    "fx_oil": r"原油|ドル円|為替|対ドル|円安|円高|介入|40年ぶり|中東|ホルムズ",
     "earnings": r"決算|業績|見通し|ガイダンス",
 }
 
@@ -164,6 +173,9 @@ def clean_text(value: str | None) -> str:
 
 
 def normalize_title(title: str) -> str:
+    title = strip_source_suffix(title)
+    title = re.sub(r"（\s*(Bloomberg|ブルームバーグ)\s*）$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\(\s*(Bloomberg|ブルームバーグ)\s*\)$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", "", title.lower())
     return re.sub(r"[|｜:：\-ー–—].*$", "", title)
 
