@@ -390,9 +390,12 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
         title_key = normalize_title(article.title)
         if title_key in used_titles:
             continue
+        theme = article_theme(article)
+        if theme in used_themes and len(selected) < 3:
+            continue
         selected.append(article)
         used_titles.add(title_key)
-        used_themes.add(article_theme(article))
+        used_themes.add(theme)
         if len(selected) == 3:
             break
 
