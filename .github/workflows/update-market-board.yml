@@ -12,7 +12,7 @@ permissions:
 jobs:
   update-market-board:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -37,7 +37,11 @@ jobs:
       - name: Update charts
         run: node work/rebuild_popup_svg_charts.js
 
+      - name: Verify generated board
+        run: python verify_market_board.py --html-file index.html
+
       - name: Commit updated board
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -45,6 +49,15 @@ jobs:
             git add index.html
             git commit -m "Update market board"
             git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "No changes to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Verify published board
+        run: |
+          python verify_market_board.py \
+            --html-file index.html \
+            --public-url https://taniguchisoshi.github.io/market-board/ \
+            --wait-public-seconds 600

@@ -28,6 +28,7 @@ AUTO_NEWS_START = "<!-- AUTO_NEWS_START -->"
 AUTO_NEWS_END = "<!-- AUTO_NEWS_END -->"
 
 JST = ZoneInfo("Asia/Tokyo")
+JP_WEEKDAYS = "月火水木金土日"
 
 BLOOMBERG_QUERIES = [
     '"米国市況" Bloomberg',
@@ -544,6 +545,39 @@ def replace_auto_news_block(content: str, news_html: str) -> str:
     return f"{before}\n{news_html}\n{after}"
 
 
+def jst_board_date_label(now: datetime | None = None) -> str:
+    current = now or datetime.now(timezone.utc).astimezone(JST)
+    return f"{current.year}年{current.month}月{current.day}日（{JP_WEEKDAYS[current.weekday()]}）"
+
+
+def refresh_static_date_labels(content: str) -> str:
+    label = jst_board_date_label()
+    content, header_count = re.subn(
+        r'(<p style="margin:0 0 10px;color:#7dd3fc;font-size:18px;font-weight:900;">)'
+        r"\d{4}年\d{1,2}月\d{1,2}日（[月火水木金土日]）"
+        r"(</p>)",
+        rf"\g<1>{label}\2",
+        content,
+        count=1,
+    )
+    content, lookahead_count = re.subn(
+        r"(翌営業日チェック：)\d{4}年\d{1,2}月\d{1,2}日（[月火水木金土日]）",
+        rf"\g<1>{label}",
+        content,
+        count=1,
+    )
+    content = re.sub(
+        r"(CNN Business / 現在値はリンク先で確認)（確認\s+\d{2}/\d{2}\s+\d{2}:\d{2}\s+JST）",
+        r"\1",
+        content,
+    )
+    if header_count != 1:
+        raise RuntimeError("Could not update the top-left board date label.")
+    if lookahead_count != 1:
+        raise RuntimeError("Could not update the next-session check date label.")
+    return content
+
+
 def update_wordpress_page(new_content: str) -> None:
     url, headers, _ = get_wordpress_page()
     payload: dict[str, Any] = {"content": new_content}
@@ -560,6 +594,7 @@ def build_news_html() -> str:
 def update_html_file(path: Path, news_html: str) -> bool:
     current_content = path.read_text(encoding="utf-8")
     new_content = replace_auto_news_block(current_content, news_html)
+    new_content = refresh_static_date_labels(new_content)
     if new_content == current_content:
         return False
     path.write_text(new_content, encoding="utf-8")
@@ -584,7 +619,7 @@ def main() -> int:
         html_file = Path(args.html_file)
         if args.dry_run:
             current_content = html_file.read_text(encoding="utf-8")
-            replace_auto_news_block(current_content, news_html)
+            refresh_static_date_labels(replace_auto_news_block(current_content, news_html))
             print(f"Dry run OK: {html_file}")
             return 0
 
@@ -601,6 +636,7 @@ def main() -> int:
     _, _, page = get_wordpress_page()
     current_content = page_content(page)
     new_content = replace_auto_news_block(current_content, news_html)
+    new_content = refresh_static_date_labels(new_content)
     update_wordpress_page(new_content)
     print("Updated WordPress market board news block.")
     return 0
