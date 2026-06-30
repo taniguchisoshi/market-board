@@ -222,17 +222,64 @@ function niceBounds(values) {
   return { lo, hi: hi <= lo ? lo + 1 : hi };
 }
 
-function formatLatest(value, unit) {
-  if (unit === "円") return `${Math.round(value).toLocaleString("ja-JP")}円`;
+function formatPct(value) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatLatest(value, unit, symbol) {
+  if (symbol === "USDJPY=X") {
+    return `${value.toLocaleString("ja-JP", {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    })}円`;
+  }
+  if (unit === "円") {
+    return `${value.toLocaleString("ja-JP", {
+      maximumFractionDigits: 2,
+    })}円`;
+  }
   if (unit === "pt") return `${Math.round(value).toLocaleString("ja-JP")} pt`;
   if (value >= 1000) return `$${Math.round(value).toLocaleString("en-US")}`;
   return `$${value.toFixed(2)}`;
 }
 
+function labelSlots(rows, y, plot) {
+  const minGap = 34;
+  const minY = plot.y + 12;
+  const maxY = plot.y + plot.h - 12;
+  const slots = rows
+    .map((row) => {
+      const last = row.points[row.points.length - 1];
+      return { row, last, rawY: y(last.pct), labelY: y(last.pct) };
+    })
+    .sort((a, b) => a.rawY - b.rawY);
+
+  for (let i = 0; i < slots.length; i += 1) {
+    slots[i].labelY =
+      i === 0 ? Math.max(slots[i].rawY, minY) : Math.max(slots[i].rawY, slots[i - 1].labelY + minGap);
+  }
+
+  const overflow = slots.length ? slots[slots.length - 1].labelY - maxY : 0;
+  if (overflow > 0) {
+    for (const slot of slots) slot.labelY -= overflow;
+  }
+
+  for (let i = slots.length - 2; i >= 0; i -= 1) {
+    slots[i].labelY = Math.min(slots[i].labelY, slots[i + 1].labelY - minGap);
+  }
+
+  const underflow = slots.length ? minY - slots[0].labelY : 0;
+  if (underflow > 0) {
+    for (const slot of slots) slot.labelY += underflow;
+  }
+
+  return new Map(slots.map((slot) => [slot.row.symbol, slot]));
+}
+
 function buildSvg(chart, rows, stamp) {
-  const width = 1040;
+  const width = 1160;
   const height = 650;
-  const plot = { x: 72, y: 148, w: 836, h: 434 };
+  const plot = { x: 72, y: 148, w: 820, h: 434 };
   const values = rows.flatMap((row) => row.points.map((point) => point.pct));
   const { lo, hi } = niceBounds(values);
   const y = (value) => plot.y + ((hi - value) / (hi - lo)) * plot.h;
@@ -254,26 +301,31 @@ function buildSvg(chart, rows, stamp) {
   const valueChips = rows
     .map((row, index) => {
       const col = index % 4;
-      const chipX = 72 + col * 204;
+      const chipX = 72 + col * 250;
       const chipY = 104 + Math.floor(index / 4) * 31;
-      return `<rect x="${chipX}" y="${chipY}" width="190" height="25" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"></rect>
+      const last = row.points[row.points.length - 1];
+      return `<rect x="${chipX}" y="${chipY}" width="236" height="25" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"></rect>
 <circle cx="${chipX + 14}" cy="${chipY + 12.5}" r="5" fill="${row.color}"></circle>
-<text x="${chipX + 27}" y="${chipY + 17}" fill="#111827" font-size="13" font-weight="900" font-family="-apple-system,BlinkMacSystemFont,Hiragino Sans,Yu Gothic,Meiryo,sans-serif">${escapeHtml(row.label)} ${escapeHtml(formatLatest(row.latest, row.unit))}</text>`;
+<text x="${chipX + 27}" y="${chipY + 17}" fill="#111827" font-size="13" font-weight="900" font-family="-apple-system,BlinkMacSystemFont,Hiragino Sans,Yu Gothic,Meiryo,sans-serif">${escapeHtml(row.label)} ${escapeHtml(formatLatest(row.latest, row.unit, row.symbol))} / ${escapeHtml(formatPct(last.pct))}</text>`;
     })
     .join("\n");
+  const slots = labelSlots(rows, y, plot);
   const lines = rows
     .map((row) => {
       const d = row.points
         .map((point, index) => `${index === 0 ? "M" : "L"}${x(index, row.points.length).toFixed(1)} ${y(point.pct).toFixed(1)}`)
         .join(" ");
       const last = row.points[row.points.length - 1];
-      const lx = plot.x + plot.w + 20;
+      const lx = plot.x + plot.w + 28;
       const ly = y(last.pct);
-      const sign = last.pct >= 0 ? "+" : "";
+      const slot = slots.get(row.symbol);
+      const labelY = slot ? slot.labelY : ly;
+      const leaderStartX = plot.x + plot.w + 6;
+      const leaderMidX = lx - 12;
       return `<path d="${d}" fill="none" stroke="${row.color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"></path>
-<line x1="${plot.x + plot.w + 6}" y1="${ly.toFixed(1)}" x2="${lx - 4}" y2="${ly.toFixed(1)}" stroke="${row.color}" stroke-width="1.5"></line>
-<rect x="${lx}" y="${(ly - 14).toFixed(1)}" width="106" height="25" rx="7" fill="${row.color}"></rect>
-<text x="${lx + 8}" y="${(ly + 4).toFixed(1)}" fill="#ffffff" font-size="13" font-weight="900" font-family="-apple-system,BlinkMacSystemFont,Hiragino Sans,Yu Gothic,Meiryo,sans-serif">${escapeHtml(row.label)} ${sign}${last.pct.toFixed(2)}%</text>`;
+<path d="M${leaderStartX} ${ly.toFixed(1)} H${leaderMidX} V${labelY.toFixed(1)} H${lx - 5}" fill="none" stroke="${row.color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+<rect x="${lx}" y="${(labelY - 14).toFixed(1)}" width="154" height="27" rx="7" fill="${row.color}"></rect>
+<text x="${lx + 8}" y="${(labelY + 4).toFixed(1)}" fill="#ffffff" font-size="13" font-weight="900" font-family="-apple-system,BlinkMacSystemFont,Hiragino Sans,Yu Gothic,Meiryo,sans-serif">${escapeHtml(row.label)} ${escapeHtml(formatPct(last.pct))}</text>`;
     })
     .join("\n");
   const legend = rows

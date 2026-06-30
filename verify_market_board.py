@@ -78,8 +78,28 @@ def check_html(html: str) -> list[str]:
         "index chart uses indexes": all(x in index_chart for x in ["NASDAQ100", "S&amp;P500", "DOW", "Russell2000"]),
         "index chart excludes ETFs": all(x not in index_chart for x in ["QQQ", "SPY", "DIA", "IWM"]),
         "previous close baseline": "前日終値 = 0%" in html,
+        "USD/JPY shows decimal price": bool(re.search(r"USD/JPY\s+\d{1,3}\.\d{3}円\s+/\s+[+-]\d+\.\d{2}%", html)),
     }
     failures.extend(name for name, passed in checks.items() if not passed)
+
+    for chart_id in re.findall(r'<section id="(mb-chart-[^"]+)" class="market-board-popup">', html):
+        if chart_id == "mb-chart-heatmap":
+            continue
+        section = html[html.index(f'<section id="{chart_id}"') :]
+        section = section[: section.index("</section>")]
+        label_ys = [
+            float(y_value) + 14
+            for y_value in re.findall(r'<rect x="920" y="([0-9.]+)" width="154" height="27"', section)
+        ]
+        if not label_ys:
+            failures.append(f"{chart_id} has no visible right-edge percent labels.")
+            continue
+        gaps = [b - a for a, b in zip(sorted(label_ys), sorted(label_ys)[1:])]
+        if any(gap < 33.9 for gap in gaps):
+            failures.append(f"{chart_id} right-edge percent labels overlap.")
+        chip_pct_count = len(re.findall(r"/\s*[+-]\d+\.\d{2}%</text>", section))
+        if chip_pct_count < len(label_ys):
+            failures.append(f"{chart_id} price chips do not all include percent values.")
     return failures
 
 
