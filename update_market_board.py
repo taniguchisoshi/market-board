@@ -242,7 +242,7 @@ def parse_rss_items(xml_text: str) -> list[dict[str, str]]:
     return items
 
 
-def fetch_news_candidates(max_articles: int = 60) -> list[Article]:
+def fetch_news_candidates(max_articles: int = 100) -> list[Article]:
     articles: list[Article] = []
     seen: set[str] = set()
 
