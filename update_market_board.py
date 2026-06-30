@@ -139,11 +139,12 @@ EXCLUDE_NEWS_PATTERNS = re.compile(
 )
 
 THEME_PATTERNS = {
+    "geopolitics_oil": r"停戦|停戦合意|ホルムズ|中東|イラン|イスラエル|報復|攻撃応酬|原油",
     "semiconductor": r"半導体|エヌビディア|NVIDIA|Micron|マイクロン|Broadcom|ブロードコム|SOX|AI",
     "rates": r"FRB|FOMC|金利|利下げ|利上げ|米国債|長期金利|パウエル",
     "macro": r"CPI|PCE|雇用統計|PMI|GDP|景気|インフレ",
     "index": r"米国株|米株|S&P500|Ｓ＆Ｐ５００|ナスダック|NASDAQ|NYダウ|ダウ",
-    "fx_oil": r"原油|ドル円|為替|対ドル|円安|円高|介入|40年ぶり|中東|停戦|停戦合意|ホルムズ|イラン|イスラエル|報復",
+    "fx": r"ドル円|為替|対ドル|円安|円高|介入|40年ぶり",
     "earnings": r"決算|業績|見通し|ガイダンス",
 }
 
@@ -407,7 +408,7 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
             continue
 
         theme = article_theme(article)
-        if theme in used_themes and len(selected) < 3:
+        if theme in used_themes and len(selected) < 5:
             continue
 
         selected.append(article)
@@ -423,6 +424,23 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
             selected.append(article)
             if len(selected) == 5:
                 break
+
+    if "geopolitics_oil" not in {article_theme(article) for article in selected}:
+        geopolitics = next(
+            (
+                article
+                for article in ranked
+                if article_theme(article) == "geopolitics_oil"
+                and normalize_title(article.title) not in used_titles
+                and score_article(article) >= 10
+            ),
+            None,
+        )
+        if geopolitics is not None:
+            if len(selected) < 5:
+                selected.append(geopolitics)
+            else:
+                selected[-1] = geopolitics
 
     return [
         {
