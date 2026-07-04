@@ -115,6 +115,10 @@ IMPACT_KEYWORDS = {
     "関税": 7,
 }
 
+EXCLUDED_SOURCES = {
+    "Moomoo",
+}
+
 SOURCE_BONUS = {
     "Bloomberg": 45,
     "Bloomberg.com": 50,
@@ -133,7 +137,10 @@ EXCLUDE_NEWS_PATTERNS = re.compile(
     r"\bQuote\b|Stock Price Quote|Fund\s+-\s+Bloomberg|Analysis\s+-|"
     r"Index\s+-\s+Bloomberg|^\w{2,10}[:：]\s|"
     r"ファンド|投信|投資信託|基準価額|eMAXIS|Slim米国株式|\b\d{8}\b|"
-    r"株価・株式情報|株価情報|株式情報|【[A-Z]{1,6}】|"
+    r"株価・株式情報|株価情報|株式情報|指数情報・推移|【[A-Z0-9=.^-]{1,12}】|"
+    r"為替レート・相場|指数情報・推移|決算プラス・インパクト銘柄|東証プライム|"
+    r"Moomoo|前回の決算|決算は\d{1,2}月\d{1,2}日|"
+    r"財務諸表だけでは勝てない|非構造化データ|日本トップが語る|"
     r"NISA|おすすめETF|じぶん年金|高配当株ETF|今朝の5本",
     flags=re.IGNORECASE,
 )
@@ -256,6 +263,8 @@ def fetch_news_candidates(max_articles: int = 100) -> list[Article]:
                 continue
             source = clean_text(entry.get("source", "")) or "Google News"
             summary = clean_text(entry.get("summary", ""))
+            if source in EXCLUDED_SOURCES:
+                continue
             if EXCLUDE_NEWS_PATTERNS.search(" ".join([title, source, summary])):
                 continue
 
