@@ -82,7 +82,7 @@ IMPACT_KEYWORDS = {
     "エヌビディア": 11,
     "NVIDIA": 11,
     "半導体": 10,
-    "AI": 9,
+    "AI半導体": 9,
     "アップル": 8,
     "Apple": 8,
     "マイクロソフト": 8,
@@ -141,7 +141,9 @@ EXCLUDE_NEWS_PATTERNS = re.compile(
     r"為替レート・相場|指数情報・推移|決算プラス・インパクト銘柄|東証プライム|"
     r"Moomoo|前回の決算|決算は\d{1,2}月\d{1,2}日|"
     r"財務諸表だけでは勝てない|非構造化データ|日本トップが語る|"
-    r"NISA|おすすめETF|じぶん年金|高配当株ETF|今朝の5本",
+    r"NISA|おすすめの?[^|｜。]*ETF|米国金融株ETF|高配当株ETF|"
+    r"じぶん年金|今朝の5本|"
+    r"インド株再評価|ドイツ、成長回復",
     flags=re.IGNORECASE,
 )
 
@@ -393,6 +395,7 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
     selected: list[Article] = []
     used_themes: set[str] = set()
     used_titles: set[str] = set()
+    priority_themes = {"index", "fx", "rates", "semiconductor", "geopolitics_oil"}
 
     for article in ranked:
         if not is_bloombergish(article):
@@ -401,6 +404,8 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
         if title_key in used_titles:
             continue
         theme = article_theme(article)
+        if theme not in priority_themes:
+            continue
         if theme in used_themes and len(selected) < 3:
             continue
         selected.append(article)

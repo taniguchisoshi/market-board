@@ -177,17 +177,44 @@ function jstParts(timestamp, range) {
   return `${get("month")}/${get("day")} ${get("hour")}:${get("minute")}`;
 }
 
-async function fetchSeries([symbol, label, name, color, unit], chart) {
+async function fetchChartResult(symbol, range, interval) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol
-  )}?range=${chart.range}&interval=${chart.interval}`;
+  )}?range=${range}&interval=${interval}`;
   const json = await fetchJson(url);
-  const result = json.chart?.result?.[0];
+  return json.chart?.result?.[0];
+}
+
+function resultPoints(result) {
   const timestamps = result?.timestamp || [];
   const closes = result?.indicators?.quote?.[0]?.close || [];
-  const points = timestamps
+  return timestamps
     .map((timestamp, index) => ({ timestamp, close: closes[index] }))
     .filter((point) => Number.isFinite(point.close));
+}
+
+function latestTradingDayPoints(points) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const latestDay = formatter.format(new Date(points[points.length - 1].timestamp * 1000));
+  return points.filter(
+    (point) => formatter.format(new Date(point.timestamp * 1000)) === latestDay
+  );
+}
+
+async function fetchSeries([symbol, label, name, color, unit], chart) {
+  let result = await fetchChartResult(symbol, chart.range, chart.interval);
+  let points = resultPoints(result);
+  if (points.length < 2 && chart.range === "1d") {
+    result = await fetchChartResult(symbol, "5d", "15m");
+    const fallbackPoints = resultPoints(result);
+    points = latestTradingDayPoints(fallbackPoints);
+    if (points.length < 2) points = fallbackPoints;
+  }
   if (points.length < 2) throw new Error(`No chart points for ${symbol}`);
   const previousClose = result?.meta?.chartPreviousClose;
   const first =
