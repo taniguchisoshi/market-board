@@ -143,7 +143,10 @@ EXCLUDE_NEWS_PATTERNS = re.compile(
     r"財務諸表だけでは勝てない|非構造化データ|日本トップが語る|"
     r"NISA|おすすめの?[^|｜。]*ETF|米国金融株ETF|高配当株ETF|"
     r"じぶん年金|今朝の5本|"
-    r"インド株再評価|ドイツ、成長回復",
+    r"Tokyo Dispatch|経済トレンドをお届け|アニメグッズ市場|"
+    r"インド株再評価|ドイツ、成長回復|"
+    r"W杯|ワールドカップ|ベルギー猛反発|防衛支出|NATO|"
+    r"HALO|欧州の資本集約型",
     flags=re.IGNORECASE,
 )
 
@@ -153,7 +156,7 @@ THEME_PATTERNS = {
     "rates": r"FRB|FOMC|金利|利下げ|利上げ|米国債|長期金利|パウエル",
     "macro": r"CPI|PCE|雇用統計|PMI|GDP|景気|インフレ",
     "index": r"米国株|米株|S&P500|Ｓ＆Ｐ５００|ナスダック|NASDAQ|NYダウ|ダウ",
-    "fx": r"ドル円|為替|対ドル|円安|円高|介入|40年ぶり",
+    "fx": r"ドル円|為替|対ドル|円安|円高|介入|40年ぶり|1ドル|１ドル",
     "earnings": r"決算|業績|見通し|ガイダンス",
 }
 
@@ -201,6 +204,39 @@ def normalize_title(title: str) -> str:
     title = re.sub(r"\(\s*(Bloomberg|ブルームバーグ)\s*\)$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", "", title.lower())
     return re.sub(r"[|｜:：\-ー–—].*$", "", title)
+
+
+def title_signature(title: str) -> set[str]:
+    title = normalize_title(title)
+    title = title.replace("２", "2")
+    signature: set[str] = set()
+    for keyword in (
+        "円相場",
+        "円安",
+        "円高",
+        "過小評価",
+        "山崎元財務官",
+        "ゴールドマン",
+        "165円",
+        "半導体",
+        "S&P500",
+        "原油",
+        "財政懸念",
+    ):
+        if keyword.lower() in title:
+            signature.add(keyword.lower())
+    return signature
+
+
+def is_near_duplicate(article: Article, selected: list[Article]) -> bool:
+    article_signature = title_signature(article.title)
+    if len(article_signature) < 2:
+        return False
+    for existing in selected:
+        existing_signature = title_signature(existing.title)
+        if len(article_signature & existing_signature) >= 2:
+            return True
+    return False
 
 
 def read_url(url: str, *, headers: dict[str, str] | None = None, data: bytes | None = None) -> str:
@@ -403,6 +439,8 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
         title_key = normalize_title(article.title)
         if title_key in used_titles:
             continue
+        if is_near_duplicate(article, selected):
+            continue
         theme = article_theme(article)
         if theme not in priority_themes:
             continue
@@ -420,9 +458,14 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
         title_key = normalize_title(article.title)
         if title_key in used_titles:
             continue
+        if is_near_duplicate(article, selected):
+            continue
 
         theme = article_theme(article)
-        if theme in used_themes and len(selected) < 5:
+        if theme not in priority_themes:
+            continue
+
+        if theme in used_themes and len(selected) < 4:
             continue
 
         selected.append(article)
@@ -434,6 +477,10 @@ def summarize_without_ai(articles: list[Article]) -> list[dict[str, str]]:
     if len(selected) < 5:
         for article in ranked:
             if article in selected:
+                continue
+            if is_near_duplicate(article, selected):
+                continue
+            if article_theme(article) not in priority_themes and score_article(article) < 70:
                 continue
             selected.append(article)
             if len(selected) == 5:
