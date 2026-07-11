@@ -178,15 +178,15 @@ def env_required(name: str) -> str:
     return value
 
 
-def google_news_rss_url(query: str, *, japanese: bool) -> str:
+def google_news_rss_url(query: str, *, japanese: bool, days: int = 1) -> str:
     if japanese:
         return (
             "https://news.google.com/rss/search?"
-            f"q={quote_plus(query + ' when:1d')}&hl=ja&gl=JP&ceid=JP:ja"
+            f"q={quote_plus(query + f' when:{days}d')}&hl=ja&gl=JP&ceid=JP:ja"
         )
     return (
         "https://news.google.com/rss/search?"
-        f"q={quote_plus(query + ' when:1d')}&hl=en-US&gl=US&ceid=US:en"
+        f"q={quote_plus(query + f' when:{days}d')}&hl=en-US&gl=US&ceid=US:en"
     )
 
 
@@ -291,9 +291,9 @@ def fetch_news_candidates(max_articles: int = 100) -> list[Article]:
     articles: list[Article] = []
     seen: set[str] = set()
 
-    def collect(query: str, *, japanese: bool) -> None:
+    def collect(query: str, *, japanese: bool, days: int = 1) -> None:
         nonlocal articles
-        xml_text = read_url(google_news_rss_url(query, japanese=japanese))
+        xml_text = read_url(google_news_rss_url(query, japanese=japanese, days=days))
         for entry in parse_rss_items(xml_text):
             title = clean_text(entry.get("title", ""))
             url = entry.get("link", "")
@@ -326,6 +326,12 @@ def fetch_news_candidates(max_articles: int = 100) -> list[Article]:
         collect(query, japanese=True)
         if len(articles) >= max_articles:
             break
+
+    if len(articles) < 20:
+        for query in JAPANESE_QUERIES:
+            collect(query, japanese=True, days=3)
+            if len(articles) >= max_articles:
+                break
 
     return articles[:max_articles]
 
