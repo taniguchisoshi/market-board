@@ -116,6 +116,7 @@ IMPACT_KEYWORDS = {
 }
 
 EXCLUDED_SOURCES = {
+    "Mshale",
     "Moomoo",
 }
 
