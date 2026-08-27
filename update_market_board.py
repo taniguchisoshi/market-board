@@ -116,8 +116,12 @@ IMPACT_KEYWORDS = {
 }
 
 EXCLUDED_SOURCES = {
+    "BigGo ファイナンス",
+    "Chosunbiz",
     "Mshale",
     "Moomoo",
+    "PANews",
+    "Yellow.com",
 }
 
 SOURCE_BONUS = {
@@ -204,6 +208,7 @@ def clean_text(value: str | None) -> str:
 
 def normalize_title(title: str) -> str:
     title = strip_source_suffix(title)
+    title = re.sub(r"[（(]\s*(ロイター|Reuters|時事通信)\s*[)）]", "", title, flags=re.IGNORECASE)
     title = re.sub(r"（\s*(Bloomberg|ブルームバーグ)\s*）$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\(\s*(Bloomberg|ブルームバーグ)\s*\)$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", "", title.lower())
